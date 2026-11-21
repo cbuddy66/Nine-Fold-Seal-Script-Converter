@@ -332,7 +332,7 @@ function render(){
     '" width="'+(W*2)+'" height="'+(H*2)+'">'+
     '<defs>'+defs+'</defs>'+
     '<rect width="'+W+'" height="'+H+'" fill="'+bg+'"/>'+
-    '<g clip-path="url(#'+clipId+)">'+groups+'</g>'+
+    '<g clip-path="url(#'+clipId+')">'+groups+'</g>'+
     frame+'</svg>';
   $("legend").textContent=legend.join("  ·  ");
 }
