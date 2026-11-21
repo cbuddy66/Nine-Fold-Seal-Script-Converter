@@ -24,7 +24,9 @@ select,input[type=range]{width:100%;accent-color:var(--accent)}
 button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 14px;font-size:.95rem;cursor:pointer}
 button:hover{filter:brightness(1.1)}
 .examples{display:flex;flex-wrap:wrap;gap:6px}
-.examples button{background:#2c2740;font-size:.85rem;padding:6px 10px;font-family:"Noto Serif TC",serif}
+.examples button{background:#2c2740;font-size:.95rem;padding:6px 10px;font-family:"Noto Serif TC","Noto Serif",serif}
+.exlist{font-size:.78rem;color:#8f86aa;line-height:1.7}
+.exlist b{color:#c9c2db;font-weight:600;font-family:"Noto Serif TC","Noto Serif",serif}
 #stage{background:var(--panel);border-radius:12px;padding:16px;min-height:300px;display:flex;align-items:center;justify-content:center}
 #stage svg{width:100%;height:auto;max-height:72vh}
 .legend{font-size:.82rem;color:#8f86aa;margin-top:10px;text-align:center;line-height:1.6}
@@ -47,6 +49,13 @@ button:hover{filter:brightness(1.1)}
       <button data-t="國泰民安">國泰民安</button>
       <button data-t="天子行寶">天子行寶</button>
       <button data-t="日">日</button>
+    </div>
+    <div class="exlist">
+      <b>永受嘉福</b> — “Eeuwig ontvangen zegen en geluk”<br>
+      <b>風調雨順</b> — “Gunstige wind en regen in het juiste seizoen”<br>
+      <b>國泰民安</b> — “Het land welvarend, het volk in vrede”<br>
+      <b>天子行寶</b> — “Zegel in gebruik door de Zoon des Hemels”<br>
+      <b>日</b> — “Zon”
     </div>
 
     <div>
@@ -94,15 +103,15 @@ button:hover{filter:brightness(1.1)}
 <script>
 (function(){
 "use strict";
-const RASTER=512, MARGIN=12, CELL=120;
-const GAP=RASTER*0.035, MINRUN=RASTER*0.018;
-const $=id=>document.getElementById(id);
-const rCache=new Map(), pathCache=new Map();
+var RASTER=512, MARGIN=12, CELL=120;
+var GAP=RASTER*0.035, MINRUN=RASTER*0.018;
+function $(id){return document.getElementById(id);}
+var rCache=new Map(), pathCache=new Map();
 
 /* ---------- Stap 1: rasteriseren + normaliseren tot vierkant ---------- */
 function bboxFromData(d){
-  let x0=RASTER,y0=RASTER,x1=-1,y1=-1;
-  for(let y=0;y<RASTER;y++)for(let x=0;x<RASTER;x++){
+  var x0=RASTER,y0=RASTER,x1=-1,y1=-1;
+  for(var y=0;y<RASTER;y++)for(var x=0;x<RASTER;x++){
     if(d[(y*RASTER+x)*4+3]>120){
       if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
     }
@@ -110,28 +119,30 @@ function bboxFromData(d){
   return x1<0?null:{x:x0,y:y0,w:x1-x0+1,h:y1-y0+1};
 }
 function rasterize(ch){
-  const c=document.createElement("canvas");c.width=c.height=RASTER;
-  const ctx=c.getContext("2d",{willReadFrequently:true});
-  const font=f=>'700 '+f+'px "Noto Serif TC","PingFang TC","Microsoft JhengHei","Noto Sans TC",serif';
+  var c=document.createElement("canvas");c.width=c.height=RASTER;
+  var ctx=c.getContext("2d",{willReadFrequently:true});
+  function font(f){return '700 '+f+'px "Noto Serif TC","PingFang TC","Microsoft JhengHei","Noto Sans TC",serif';}
   ctx.fillStyle="#000";ctx.textAlign="center";ctx.textBaseline="middle";
   ctx.font=font(Math.round(RASTER*0.82));
   ctx.fillText(ch,RASTER/2,RASTER/2+RASTER*0.04);
-  const bb=bboxFromData(ctx.getImageData(0,0,RASTER,RASTER).data);
+  var bb=bboxFromData(ctx.getImageData(0,0,RASTER,RASTER).data);
   if(!bb)return null;
-  /* uitrekken zodat het teken exact het vierkant vult */
-  const sx=(RASTER-2*MARGIN)/bb.w, sy=(RASTER-2*MARGIN)/bb.h;
+  var sx=(RASTER-2*MARGIN)/bb.w, sy=(RASTER-2*MARGIN)/bb.h;
   ctx.clearRect(0,0,RASTER,RASTER);
   ctx.save();
   ctx.translate(MARGIN-bb.x*sx,MARGIN-bb.y*sy);
   ctx.scale(sx,sy);
   ctx.fillText(ch,RASTER/2,RASTER/2+RASTER*0.04);
   ctx.restore();
-  const d=ctx.getImageData(0,0,RASTER,RASTER).data;
-  const mask=new Uint8Array(RASTER*RASTER);let ink=0;
-  for(let i=0;i<mask.length;i++){if(d[i*4+3]>120){mask[i]=1;ink++;}}
-  return {mask,density:ink/(RASTER*RASTER)};
+  var d=ctx.getImageData(0,0,RASTER,RASTER).data;
+  var mask=new Uint8Array(RASTER*RASTER),ink=0,i;
+  for(i=0;i<mask.length;i++){if(d[i*4+3]>120){mask[i]=1;ink++;}}
+  return {mask:mask,density:ink/(RASTER*RASTER)};
 }
-function rasterOf(ch){if(!rCache.has(ch))rCache.set(ch,rasterize(ch));return rCache.get(ch);}
+function rasterOf(ch){
+  if(!rCache.has(ch))rCache.set(ch,rasterize(ch));
+  return rCache.get(ch);
+}
 
 /* ---------- Stap 5: adaptief vouwaantal ---------- */
 function autoFolds(density){
@@ -140,39 +151,49 @@ function autoFolds(density){
 
 /* ---------- Stap 3: gelijke banen + Stap 2: kolomruns ---------- */
 function buildSegments(mask,F){
-  const bandH=RASTER/F,segs=[];
-  for(let b=0;b<F;b++){
-    const y0=Math.floor(b*bandH),y1=Math.max(y0+1,Math.floor((b+1)*bandH));
-    const has=new Uint8Array(RASTER);
-    for(let y=y0;y<y1;y++){const off=y*RASTER;for(let x=0;x<RASTER;x++)if(mask[off+x])has[x]=1;}
-    const runs=[];let x=0;
-    while(x<RASTER){if(has[x]){const s=x;while(x<RASTER&&has[x])x++;runs.push([s,x]);}else x++;}
-    const merged=[];
-    for(const r of runs){
-      if(merged.length&&r[0]-merged[merged.length-1][1]<GAP)merged[merged.length-1][1]=r[1];
-      else merged.push([r[0],r[1]]);
+  var bandH=RASTER/F,segs=[],b;
+  for(b=0;b<F;b++){
+    var y0=Math.floor(b*bandH),y1=Math.max(y0+1,Math.floor((b+1)*bandH));
+    var has=new Uint8Array(RASTER),y,x;
+    for(y=y0;y<y1;y++){var off=y*RASTER;for(x=0;x<RASTER;x++)if(mask[off+x])has[x]=1;}
+    var runs=[],px=0;
+    while(px<RASTER){
+      if(has[px]){var s=px;while(px<RASTER&&has[px])px++;runs.push([s,px]);}
+      else px++;
     }
-    const kept=merged.filter(r=>r[1]-r[0]>=MINRUN);
-    segs.push(kept.map(r=>({x1:r[0],x2:r[1],y:y0+bandH/2})));
+    var merged=[];
+    for(var r=0;r<runs.length;r++){
+      if(merged.length&&runs[r][0]-merged[merged.length-1][1]<GAP)
+        merged[merged.length-1][1]=runs[r][1];
+      else merged.push([runs[r][0],runs[r][1]]);
+    }
+    var kept=merged.filter(function(rr){return rr[1]-rr[0]>=MINRUN;});
+    segs.push(kept.map(function(rr){
+      return {x1:rr[0],x2:rr[1],y:y0+bandH/2};
+    }));
   }
   return segs;
 }
 
 /* ---------- Stap 4: vouwen (afwisselende verbinders) ---------- */
 function buildPaths(segs){
-  const p=[];
-  for(let b=0;b<segs.length;b++){
-    for(const s of segs[b])p.push("M"+s.x1.toFixed(1)+" "+s.y.toFixed(1)+"H"+s.x2.toFixed(1));
+  var p=[],b,i;
+  for(b=0;b<segs.length;b++){
+    for(i=0;i<segs[b].length;i++){
+      var s=segs[b][i];
+      p.push("M"+s.x1.toFixed(1)+" "+s.y.toFixed(1)+"H"+s.x2.toFixed(1));
+    }
     if(b+1<segs.length){
-      for(let i=0;i<segs[b].length;i++){
-        const s=segs[b][i];let best=null,ov=0;
-        for(const t of segs[b+1]){
-          const o=Math.min(s.x2,t.x2)-Math.max(s.x1,t.x1);
+      for(i=0;i<segs[b].length;i++){
+        var sc=segs[b][i],best=null,ov=0,j;
+        for(j=0;j<segs[b+1].length;j++){
+          var t=segs[b+1][j];
+          var o=Math.min(sc.x2,t.x2)-Math.max(sc.x1,t.x1);
           if(o>ov){ov=o;best=t;}
         }
         if(best){
-          const x=((b+i)%2===0)?Math.max(s.x1,best.x1):Math.min(s.x2,best.x2);
-          p.push("M"+x.toFixed(1)+" "+s.y.toFixed(1)+"V"+best.y.toFixed(1));
+          var x=((b+i)%2===0)?Math.max(sc.x1,best.x1):Math.min(sc.x2,best.x2);
+          p.push("M"+x.toFixed(1)+" "+sc.y.toFixed(1)+"V"+best.y.toFixed(1));
         }
       }
     }
@@ -180,71 +201,135 @@ function buildPaths(segs){
   return p.join("");
 }
 function glyph(ch,fmode,manualF){
-  const r=rasterOf(ch); if(!r)return null;
-  const folds=fmode==="manual"?manualF:autoFolds(r.density);
-  const key=ch+"|"+folds;
+  var r=rasterOf(ch); if(!r)return null;
+  var folds=(fmode==="manual")?manualF:autoFolds(r.density);
+  var key=ch+"|"+folds;
   if(!pathCache.has(key))pathCache.set(key,buildPaths(buildSegments(r.mask,folds)));
   return {paths:pathCache.get(key),folds:folds};
 }
 
 /* ---------- Renderen naar SVG-zegel ---------- */
 function render(){
-  const chars=[...$("inp").value].filter(c=>/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3007]/.test(c));
+  var raw=$("inp").value||"";
+  var chars=[];
+  for(var i=0;i<raw.length;i++){
+    var c=raw.charAt(i);
+    if(/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3007]/.test(c)&&chars.indexOf(c)<0)chars.push(c);
+  }
   if(!chars.length){
     $("stage").innerHTML='<p style="color:#8f86aa">Typ traditionele Chinese tekens…</p>';
-    $("legend").textContent="";return;
+    $("legend").textContent="";
+    return;
   }
-  const colsOpt=parseInt($("cols").value,10);
-  const cols=colsOpt||Math.ceil(Math.sqrt(chars.length));
-  const rows=Math.ceil(chars.length/cols);
-  const W=cols*CELL,H=rows*CELL,k=CELL/RASTER;
-  const sel=$("style").value;
-  let bg,fg;
+  var colsOpt=parseInt($("cols").value,10);
+  var cols=colsOpt||Math.ceil(Math.sqrt(chars.length));
+  var rows=Math.ceil(chars.length/cols);
+  var W=cols*CELL,H=rows*CELL,k=CELL/RASTER;
+  var sel=$("style").value,bg,fg;
   if(sel==="ink"){bg="#faf6ec";fg="#17141a";}
   else if(sel==="zhu"){bg="#faf6ec";fg="#b3271e";}
   else{bg="#b3271e";fg="#faf6ec";}
-  const swRaster=+$("strokeW").value, swSvg=swRaster*k;
-  const fmode=$("foldMode").value, manualF=+$("folds").value;
-  let groups="",legend=[];
-  for(let i=0;i<chars.length;i++){
-    const g=glyph(chars[i],fmode,manualF);
-    const cx=(i%cols)*CELL,cy=Math.floor(i/cols)*CELL;
+  var swRaster=parseInt($("strokeW").value,10), swSvg=swRaster*k;
+  var fmode=$("foldMode").value, manualF=parseInt($("folds").value,10);
+  var groups="",legend=[];
+  for(i=0;i<chars.length;i++){
+    var g=glyph(chars[i],fmode,manualF);
+    var cx=(i%cols)*CELL,cy=Math.floor(i/cols)*CELL;
     if(g){
       groups+='<g transform="translate('+cx+','+cy+') scale('+k+')" fill="none" stroke="'+fg+
               '" stroke-width="'+swRaster+'" stroke-linecap="square"><path d="'+g.paths+'"/></g>';
       legend.push(chars[i]+" · "+g.folds+" banen");
     }else legend.push(chars[i]+" · —");
   }
-  let frame="";
+  var frame="";
   if($("frame").checked){
-    const inset=Math.max(3,swSvg*0.9);
+    var fw=Math.max(2.5,swSvg*1.4);
+    var inset=fw;
     frame='<rect x="'+inset+'" y="'+inset+'" width="'+(W-2*inset)+'" height="'+(H-2*inset)+
-          '" fill="none" stroke="'+fg+'" stroke-width="'+(swSvg*1.6)+'" rx="10"/>';
+          '" fill="none" stroke="'+fg+'" stroke-width="'+fw+'" rx="12"/>';
   }
   $("stage").innerHTML=
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+W+' '+H+'" width="'+(W*2)+'" height="'+(H*2)+'">'+
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+W+' '+H+
+    '" width="'+(W*2)+'" height="'+(H*2)+'">'+
     '<rect width="'+W+'" height="'+H+'" fill="'+bg+'"/>'+frame+groups+'</svg>';
   $("legend").textContent=legend.join("  ·  ");
 }
 
 /* ---------- PNG-export ---------- */
 function download(){
-  const svg=$("stage").querySelector("svg");if(!svg)return;
-  const xml=new XMLSerializer().serializeToString(svg);
-  const url=URL.createObjectURL(new Blob([xml],{type:"image/svg+xml;charset=utf-8"}));
-  const img=new Image();
+  var svg=$("stage").querySelector("svg");
+  if(!svg)return;
+  var xml='<?xml version="1.0" encoding="UTF-8"?>\n'+
+          new XMLSerializer().serializeToString(svg);
+  var blob=new Blob([xml],{type:"image/svg+xml;charset=utf-8"});
+  var url=URL.createObjectURL(blob);
+  var img=new Image();
   img.onload=function(){
-    const vb=svg.viewBox.baseVal;
-    const c=document.createElement("canvas");
-    c.width=Math.min(4096,vb.width*5);c.height=c.width*vb.height/vb.width;
-    c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    try{
+      var vb=svg.viewBox.baseVal;
+      var c=document.createElement("canvas");
+      c.width=Math.min(4096,Math.round(vb.width*5));
+      c.height=Math.round(c.width*vb.height/vb.width);
+      c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+      var a=document.createElement("a");
+      if(c.toBlob){
+        c.toBlob(function(b){
+          var dl=URL.createObjectURL(b);
+          a.href=dl;a.download="jiudiezhuan-zegel.png";
+          document.body.appendChild(a);a.click();
+          document.body.removeChild(a);
+          setTimeout(function(){URL.revokeObjectURL(dl);},500);
+        },"image/png");
+      }else{
+        a.href=c.toDataURL("image/png");
+        a.download="jiudiezhuan-zegel.png";
+        document.body.appendChild(a);a.click();
+        document.body.removeChild(a);
+      }
+    }catch(e){
+      alert("Exporteren mislukt: "+e.message);
+    }finally{
+      URL.revokeObjectURL(url);
+    }
+  };
+  img.onerror=function(){
     URL.revokeObjectURL(url);
-    c.toBlob(function(b){
-      const a=document.createElement("a");
-      a.href=URL.createObjectURL(b);a.download="jiudiezhuan-zegel.png";a.click();
-    });
+    alert("De afbeelding kon niet worden gegenereerd.");
   };
   img.src=url;
 }
 
-/* ---------- Events ----------
+/* ---------- Events ---------- */
+$("inp").addEventListener("input",render);
+
+$("foldMode").addEventListener("change",function(){
+  $("folds").disabled=($("foldMode").value!=="manual");
+  render();
+});
+$("folds").addEventListener("input",render);
+
+$("strokeW").addEventListener("input",function(){
+  $("swLbl").textContent=$("strokeW").value;
+  render();
+});
+
+$("cols").addEventListener("change",render);
+$("style").addEventListener("change",render);
+$("frame").addEventListener("change",render);
+$("dl").addEventListener("click",download);
+
+var exButtons=document.querySelectorAll(".examples button");
+for(var i=0;i<exButtons.length;i++){
+  (function(btn){
+    btn.addEventListener("click",function(){
+      $("inp").value=btn.getAttribute("data-t");
+      render();
+    });
+  })(exButtons[i]);
+}
+
+render();
+})();
+</script>
+</body>
+</html>
