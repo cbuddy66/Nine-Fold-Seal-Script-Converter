@@ -103,8 +103,11 @@ button:hover{filter:brightness(1.1)}
 <script>
 (function(){
 "use strict";
-var RASTER=512, MARGIN=12, CELL=120;
+var RASTER=512, MARGIN=4, CELL=120;
 var GAP=RASTER*0.035, MINRUN=RASTER*0.018;
+var SNAP=RASTER*0.045;   /* max afstand om een streekeinde te verlengen naar een ander uiteinde */
+var JOIN=RASTER*0.075;   /* max tussenruimte om twee streekeinden aan elkaar te koppelen */
+var XTOL=RASTER*0.045;   /* x-tolerantie voor het samenvoegen van verticale verbinders */
 function $(id){return document.getElementById(id);}
 var rCache=new Map(), pathCache=new Map();
 
@@ -175,36 +178,95 @@ function buildSegments(mask,F){
   return segs;
 }
 
-/* ---------- Stap 4: vouwen (afwisselende verbinders) ---------- */
-function buildPaths(segs){
-  var p=[],b,i;
-  for(b=0;b<segs.length;b++){
+/* ---------- Stap 4: vouwen, koppelen en doorlopen ---------- */
+function buildGlyph(mask,F){
+  var bandH=RASTER/F;
+  var segs=buildSegments(mask,F);
+  var b,i,j,e;
+
+  /* verbinders tussen opeenvolgende banen; nabije losse einden aan elkaar koppelen */
+  var connectors=[];
+  for(b=0;b+1<F;b++){
     for(i=0;i<segs[b].length;i++){
       var s=segs[b][i];
-      p.push("M"+s.x1.toFixed(1)+" "+s.y.toFixed(1)+"H"+s.x2.toFixed(1));
-    }
-    if(b+1<segs.length){
-      for(i=0;i<segs[b].length;i++){
-        var sc=segs[b][i],best=null,ov=0,j;
-        for(j=0;j<segs[b+1].length;j++){
-          var t=segs[b+1][j];
-          var o=Math.min(sc.x2,t.x2)-Math.max(sc.x1,t.x1);
-          if(o>ov){ov=o;best=t;}
-        }
-        if(best){
-          var x=((b+i)%2===0)?Math.max(sc.x1,best.x1):Math.min(sc.x2,best.x2);
-          p.push("M"+x.toFixed(1)+" "+sc.y.toFixed(1)+"V"+best.y.toFixed(1));
-        }
+      var bestOv=0,bi=-1,bestGap=Infinity,bj=-1;
+      for(j=0;j<segs[b+1].length;j++){
+        var t=segs[b+1][j];
+        var ov=Math.min(s.x2,t.x2)-Math.max(s.x1,t.x1);
+        if(ov>bestOv){bestOv=ov;bi=j;}
+        var gp=(s.x2<t.x1)?(t.x1-s.x2):((t.x2<s.x1)?(s.x1-t.x2):0);
+        if(gp<bestGap){bestGap=gp;bj=j;}
+      }
+      if(bi>=0&&bestOv>0){
+        var tb=segs[b+1][bi];
+        connectors.push({g:b,x:((b+i)%2===0)?Math.max(s.x1,tb.x1):Math.min(s.x2,tb.x2)});
+      }else if(bj>=0&&bestGap<=JOIN){
+        var tj=segs[b+1][bj],xj;
+        if(s.x2<tj.x1){xj=(s.x2+tj.x1)/2;s.x2=xj;tj.x1=xj;}
+        else{xj=(s.x1+tj.x2)/2;s.x1=xj;tj.x2=xj;}
+        connectors.push({g:b,x:xj});
       }
     }
   }
-  return p.join("");
+
+  /* streekeinden doorlaten lopen tot een uiteinde van een streek in een andere baan */
+  var ends=[];
+  for(b=0;b<F;b++)for(i=0;i<segs[b].length;i++){
+    ends.push({x:segs[b][i].x1,g:b});
+    ends.push({x:segs[b][i].x2,g:b});
+  }
+  for(b=0;b<F;b++)for(i=0;i<segs[b].length;i++){
+    var s2=segs[b][i],lx=-1,rx=-1;
+    for(e=0;e<ends.length;e++){
+      var en=ends[e];
+      if(en.g!==b&&en.x<s2.x1&&s2.x1-en.x<=SNAP&&en.x>lx)lx=en.x;
+      if(en.g!==b&&en.x>s2.x2&&en.x-s2.x2<=SNAP&&(rx<0||en.x<rx))rx=en.x;
+    }
+    if(lx>=0)s2.x1=lx;
+    if(rx>=0)s2.x2=rx;
+    /* uiteinden dicht bij de rand doorlopen tot de rand zelf */
+    if(s2.x1<=SNAP)s2.x1=0;
+    if(RASTER-s2.x2<=SNAP)s2.x2=RASTER;
+  }
+
+  /* verticale verbinders op dezelfde x samenvoegen en doorlaten lopen
+     tot de middellijn van de dichtstbijzijnde streek erboven/onder,
+     of tot de rand van het tekenvlak als de reeks in de buitenste baan zit */
+  connectors.sort(function(a,c){return a.x-c.x;});
+  var buckets=[],cur=null;
+  for(i=0;i<connectors.length;i++){
+    var cn=connectors[i];
+    if(cur&&cn.x-cur.x/cur.n<=XTOL){
+      cur.x+=cn.x;cur.n++;
+      if(cn.g<cur.gMin)cur.gMin=cn.g;
+      if(cn.g+1>cur.gMax)cur.gMax=cn.g+1;
+    }else{
+      cur={x:cn.x,n:1,gMin:cn.g,gMax:cn.g+1};
+      buckets.push(cur);
+    }
+  }
+
+  /* pad opbouwen: horizontale banen + verticale verbinders */
+  var d="";
+  for(b=0;b<F;b++)for(i=0;i<segs[b].length;i++){
+    var s3=segs[b][i];
+    d+="M"+s3.x1.toFixed(1)+" "+s3.y.toFixed(1)+"H"+s3.x2.toFixed(1);
+  }
+  for(i=0;i<buckets.length;i++){
+    var bk=buckets[i],bx=bk.x/bk.n;
+    var yTop=(bk.gMin===0)?0:(bk.gMin*bandH+bandH/2);
+    var yBot=(bk.gMax===F)?RASTER:(bk.gMax*bandH-bandH/2);
+    d+="M"+bx.toFixed(1)+" "+yTop.toFixed(1)+"V"+yBot.toFixed(1);
+  }
+  return d;
 }
+
 function glyph(ch,fmode,manualF){
-  var r=rasterOf(ch); if(!r)return null;
+  var r=rasterOf(ch);
+  if(!r)return null;
   var folds=(fmode==="manual")?manualF:autoFolds(r.density);
   var key=ch+"|"+folds;
-  if(!pathCache.has(key))pathCache.set(key,buildPaths(buildSegments(r.mask,folds)));
+  if(!pathCache.has(key))pathCache.set(key,buildGlyph(r.mask,folds));
   return {paths:pathCache.get(key),folds:folds};
 }
 
@@ -231,27 +293,47 @@ function render(){
   else{bg="#b3271e";fg="#faf6ec";}
   var swRaster=parseInt($("strokeW").value,10), swSvg=swRaster*k;
   var fmode=$("foldMode").value, manualF=parseInt($("folds").value,10);
-  var groups="",legend=[];
+
+  /* frame-geometrie en bijbehorende clip: tekens lopen door tot het
+     binnenste van het frame, incl. afgeronde hoeken */
+  var showFrame=$("frame").checked;
+  var fw=Math.max(2.5,swSvg*1.4);
+  var fi=fw;                       /* middellijn van de frame-stroke */
+  var clipInset=Math.max(0,fi-fw/2);
+  var CR=12;                       /* hoekstraal van het frame */
+  var clipR=Math.max(0,CR-fw/2);
+
+  var defs="",groups="",legend=[];
+  var clipId="sealclip";
+  defs='<clipPath id="'+clipId+'"><rect x="'+clipInset.toFixed(2)+'" y="'+clipInset.toFixed(2)+
+       '" width="'+(W-2*clipInset).toFixed(2)+'" height="'+(H-2*clipInset).toFixed(2)+
+       '" rx="'+clipR.toFixed(2)+'"/></clipPath>';
+
   for(i=0;i<chars.length;i++){
     var g=glyph(chars[i],fmode,manualF);
     var cx=(i%cols)*CELL,cy=Math.floor(i/cols)*CELL;
     if(g){
       groups+='<g transform="translate('+cx+','+cy+') scale('+k+')" fill="none" stroke="'+fg+
-              '" stroke-width="'+swRaster+'" stroke-linecap="square"><path d="'+g.paths+'"/></g>';
+              '" stroke-width="'+swRaster+'" stroke-linecap="round" stroke-linejoin="round">'+
+              '<path d="'+g.paths+'"/></g>';
       legend.push(chars[i]+" · "+g.folds+" banen");
     }else legend.push(chars[i]+" · —");
   }
+
   var frame="";
-  if($("frame").checked){
-    var fw=Math.max(2.5,swSvg*1.4);
-    var inset=fw;
-    frame='<rect x="'+inset+'" y="'+inset+'" width="'+(W-2*inset)+'" height="'+(H-2*inset)+
-          '" fill="none" stroke="'+fg+'" stroke-width="'+fw+'" rx="12"/>';
+  if(showFrame){
+    frame='<rect x="'+fi.toFixed(2)+'" y="'+fi.toFixed(2)+'" width="'+(W-2*fi).toFixed(2)+
+          '" height="'+(H-2*fi).toFixed(2)+'" fill="none" stroke="'+fg+
+          '" stroke-width="'+fw.toFixed(2)+'" rx="'+CR+'"/>';
   }
+
   $("stage").innerHTML=
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+W+' '+H+
     '" width="'+(W*2)+'" height="'+(H*2)+'">'+
-    '<rect width="'+W+'" height="'+H+'" fill="'+bg+'"/>'+frame+groups+'</svg>';
+    '<defs>'+defs+'</defs>'+
+    '<rect width="'+W+'" height="'+H+'" fill="'+bg+'"/>'+
+    '<g clip-path="url(#'+clipId+)">'+groups+'</g>'+
+    frame+'</svg>';
   $("legend").textContent=legend.join("  ·  ");
 }
 
@@ -286,8 +368,8 @@ function download(){
         document.body.appendChild(a);a.click();
         document.body.removeChild(a);
       }
-    }catch(e){
-      alert("Exporteren mislukt: "+e.message);
+    }catch(err){
+      alert("Exporteren mislukt: "+err.message);
     }finally{
       URL.revokeObjectURL(url);
     }
