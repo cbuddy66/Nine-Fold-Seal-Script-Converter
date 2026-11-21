@@ -68,7 +68,7 @@ button:hover{filter:brightness(1.1)}
     <input type="range" id="folds" min="3" max="13" value="9" disabled>
 
     <div>
-      <label for="strokeW">Streekdikte: <span id="swLbl">10</span></label>
+      <label for="strokeW">Basale streekdikte (schaalt mee met vouwen): <span id="swLbl">10</span></label>
       <input type="range" id="strokeW" min="4" max="18" value="10">
     </div>
 
@@ -105,9 +105,11 @@ button:hover{filter:brightness(1.1)}
 "use strict";
 var RASTER=512, MARGIN=4, CELL=120;
 var GAP=RASTER*0.035, MINRUN=RASTER*0.018;
-var SNAP=RASTER*0.045;   /* max afstand om een streekeinde te verlengen naar een ander uiteinde */
-var JOIN=RASTER*0.075;   /* max tussenruimte om twee streekeinden aan elkaar te koppelen */
-var XTOL=RASTER*0.045;   /* x-tolerantie voor het samenvoegen van verticale verbinders */
+var SNAP=RASTER*0.05;    /* maximale afstand waarbinnen een streekeinde
+                            richting een ander uiteinde wordt verlengd;
+                            de minimale witruimte is 1x de streekdikte */
+var BASE_FOLDS=9;        /* referentie-vouwaantal voor de basale streekdikte */
+var SW_MIN=3;            /* minimale effectieve streekdikte */
 function $(id){return document.getElementById(id);}
 var rCache=new Map(), pathCache=new Map();
 
@@ -152,6 +154,17 @@ function autoFolds(density){
   return Math.max(3,Math.min(13,Math.round(12-density*17)));
 }
 
+/* ---------- Streekdikte schaalt mee met het vouwaantal ----------
+   effectief = basaal x (9 / vouwaantal), begrensd op minimaal SW_MIN
+   en maximaal de helft van de baanhoogte, zodat streek plus de
+   verplichte witruimte van 1x streekdikte altijd in de baan past */
+function effStrokeWidth(swBase,F){
+  var bandH=RASTER/F;
+  var sw=swBase*BASE_FOLDS/F;
+  var swMax=bandH/2;   /* streek + 1x streekdikte wit <= baanhoogte */
+  return Math.max(SW_MIN,Math.min(sw,swMax));
+}
+
 /* ---------- Stap 3: gelijke banen + Stap 2: kolomruns ---------- */
 function buildSegments(mask,F){
   var bandH=RASTER/F,segs=[],b;
@@ -178,38 +191,35 @@ function buildSegments(mask,F){
   return segs;
 }
 
-/* ---------- Stap 4: vouwen, koppelen en doorlopen ---------- */
-function buildGlyph(mask,F){
+/* ---------- Stap 4: vouwen, met 1x streekdikte wit tussen losse einden
+   en tussen parallelle verticalen ---------- */
+function buildGlyph(mask,F,sw){
   var bandH=RASTER/F;
   var segs=buildSegments(mask,F);
   var b,i,j,e;
 
-  /* verbinders tussen opeenvolgende banen; nabije losse einden aan elkaar koppelen */
+  /* verbinders tussen opeenvolgende banen (op basis van overlap);
+     deze blijven de vouwen binnen een teken doorverbinden */
   var connectors=[];
   for(b=0;b+1<F;b++){
     for(i=0;i<segs[b].length;i++){
-      var s=segs[b][i];
-      var bestOv=0,bi=-1,bestGap=Infinity,bj=-1;
+      var s=segs[b][i],bestOv=0,bi=-1;
       for(j=0;j<segs[b+1].length;j++){
         var t=segs[b+1][j];
         var ov=Math.min(s.x2,t.x2)-Math.max(s.x1,t.x1);
         if(ov>bestOv){bestOv=ov;bi=j;}
-        var gp=(s.x2<t.x1)?(t.x1-s.x2):((t.x2<s.x1)?(s.x1-t.x2):0);
-        if(gp<bestGap){bestGap=gp;bj=j;}
       }
-      if(bi>=0&&bestOv>0){
+      if(bi>=0){
         var tb=segs[b+1][bi];
         connectors.push({g:b,x:((b+i)%2===0)?Math.max(s.x1,tb.x1):Math.min(s.x2,tb.x2)});
-      }else if(bj>=0&&bestGap<=JOIN){
-        var tj=segs[b+1][bj],xj;
-        if(s.x2<tj.x1){xj=(s.x2+tj.x1)/2;s.x2=xj;tj.x1=xj;}
-        else{xj=(s.x1+tj.x2)/2;s.x1=xj;tj.x2=xj;}
-        connectors.push({g:b,x:xj});
       }
     }
   }
 
-  /* streekeinden doorlaten lopen tot een uiteinde van een streek in een andere baan */
+  /* streekeinden verlengen richting het dichtstbijzijnde uiteinde van een
+     streek in een andere baan, maar altijd met minstens 1x de streekdikte
+     witruimte ertussen; einden dicht bij de rand stoppen 1x streekdikte
+     van de celrand, zodat aangrenzende tekens los van elkaar staan */
   var ends=[];
   for(b=0;b<F;b++)for(i=0;i<segs[b].length;i++){
     ends.push({x:segs[b][i].x1,g:b});
@@ -222,21 +232,20 @@ function buildGlyph(mask,F){
       if(en.g!==b&&en.x<s2.x1&&s2.x1-en.x<=SNAP&&en.x>lx)lx=en.x;
       if(en.g!==b&&en.x>s2.x2&&en.x-s2.x2<=SNAP&&(rx<0||en.x<rx))rx=en.x;
     }
-    if(lx>=0)s2.x1=lx;
-    if(rx>=0)s2.x2=rx;
-    /* uiteinden dicht bij de rand doorlopen tot de rand zelf */
-    if(s2.x1<=SNAP)s2.x1=0;
-    if(RASTER-s2.x2<=SNAP)s2.x2=RASTER;
+    if(lx>=0&&s2.x1-lx>sw)s2.x1=lx+sw;
+    if(rx>=0&&rx-s2.x2>sw)s2.x2=rx-sw;
+    if(s2.x1<=SNAP)s2.x1=sw;
+    if(RASTER-s2.x2<=SNAP)s2.x2=RASTER-sw;
   }
 
-  /* verticale verbinders op dezelfde x samenvoegen en doorlaten lopen
-     tot de middellijn van de dichtstbijzijnde streek erboven/onder,
-     of tot de rand van het tekenvlak als de reeks in de buitenste baan zit */
+  /* verticale verbinders groeperen: binnen 1x streekdikte samenvoegen;
+     distincte verticalen moeten minstens 1x streekdikte wit tussen hun
+     streekranden laten (= 2x streekdikte tussen de middellijnen) */
   connectors.sort(function(a,c){return a.x-c.x;});
   var buckets=[],cur=null;
   for(i=0;i<connectors.length;i++){
     var cn=connectors[i];
-    if(cur&&cn.x-cur.x/cur.n<=XTOL){
+    if(cur&&cn.x-cur.x/cur.n<=sw){
       cur.x+=cn.x;cur.n++;
       if(cn.g<cur.gMin)cur.gMin=cn.g;
       if(cn.g+1>cur.gMax)cur.gMax=cn.g+1;
@@ -245,29 +254,44 @@ function buildGlyph(mask,F){
       buckets.push(cur);
     }
   }
+  var vlines=[];
+  for(i=0;i<buckets.length;i++){
+    var bk=buckets[i];
+    var last=vlines[vlines.length-1];
+    if(last&&(bk.x/bk.n-last.x/last.n)<2*sw){
+      last.x+=bk.x;last.n+=bk.n;
+      if(bk.gMin<last.gMin)last.gMin=bk.gMin;
+      if(bk.gMax>last.gMax)last.gMax=bk.gMax;
+    }else{
+      vlines.push({x:bk.x,n:bk.n,gMin:bk.gMin,gMax:bk.gMax});
+    }
+  }
 
-  /* pad opbouwen: horizontale banen + verticale verbinders */
+  /* pad opbouwen: horizontale banen + verticale verbinders;
+     verticalen die de boven- of onderrand bereiken stoppen 1x
+     streekdikte voor de rand van het tekenvlak */
   var d="";
   for(b=0;b<F;b++)for(i=0;i<segs[b].length;i++){
     var s3=segs[b][i];
     d+="M"+s3.x1.toFixed(1)+" "+s3.y.toFixed(1)+"H"+s3.x2.toFixed(1);
   }
-  for(i=0;i<buckets.length;i++){
-    var bk=buckets[i],bx=bk.x/bk.n;
-    var yTop=(bk.gMin===0)?0:(bk.gMin*bandH+bandH/2);
-    var yBot=(bk.gMax===F)?RASTER:(bk.gMax*bandH-bandH/2);
-    d+="M"+bx.toFixed(1)+" "+yTop.toFixed(1)+"V"+yBot.toFixed(1);
+  for(i=0;i<vlines.length;i++){
+    var vl=vlines[i],vx=vl.x/vl.n;
+    var yTop=(vl.gMin===0)?sw:(vl.gMin*bandH+bandH/2);
+    var yBot=(vl.gMax===F)?(RASTER-sw):(vl.gMax*bandH-bandH/2);
+    d+="M"+vx.toFixed(1)+" "+yTop.toFixed(1)+"V"+yBot.toFixed(1);
   }
   return d;
 }
 
-function glyph(ch,fmode,manualF){
+function glyph(ch,fmode,manualF,swBase){
   var r=rasterOf(ch);
   if(!r)return null;
   var folds=(fmode==="manual")?manualF:autoFolds(r.density);
-  var key=ch+"|"+folds;
-  if(!pathCache.has(key))pathCache.set(key,buildGlyph(r.mask,folds));
-  return {paths:pathCache.get(key),folds:folds};
+  var sw=effStrokeWidth(swBase,folds);
+  var key=ch+"|"+folds+"|"+sw;
+  if(!pathCache.has(key))pathCache.set(key,buildGlyph(r.mask,folds,sw));
+  return {paths:pathCache.get(key),folds:folds,sw:sw};
 }
 
 /* ---------- Renderen naar SVG-zegel ---------- */
@@ -291,13 +315,13 @@ function render(){
   if(sel==="ink"){bg="#faf6ec";fg="#17141a";}
   else if(sel==="zhu"){bg="#faf6ec";fg="#b3271e";}
   else{bg="#b3271e";fg="#faf6ec";}
-  var swRaster=parseInt($("strokeW").value,10), swSvg=swRaster*k;
+  var swBase=parseInt($("strokeW").value,10);
   var fmode=$("foldMode").value, manualF=parseInt($("folds").value,10);
 
   /* frame-geometrie en bijbehorende clip: tekens lopen door tot het
      binnenste van het frame, incl. afgeronde hoeken */
   var showFrame=$("frame").checked;
-  var fw=Math.max(2.5,swSvg*1.4);
+  var fw=Math.max(2.5,swBase*k*1.4);
   var fi=fw;                       /* middellijn van de frame-stroke */
   var clipInset=Math.max(0,fi-fw/2);
   var CR=12;                       /* hoekstraal van het frame */
@@ -310,13 +334,13 @@ function render(){
        '" rx="'+clipR.toFixed(2)+'"/></clipPath>';
 
   for(i=0;i<chars.length;i++){
-    var g=glyph(chars[i],fmode,manualF);
+    var g=glyph(chars[i],fmode,manualF,swBase);
     var cx=(i%cols)*CELL,cy=Math.floor(i/cols)*CELL;
     if(g){
       groups+='<g transform="translate('+cx+','+cy+') scale('+k+')" fill="none" stroke="'+fg+
-              '" stroke-width="'+swRaster+'" stroke-linecap="round" stroke-linejoin="round">'+
+              '" stroke-width="'+g.sw.toFixed(2)+'" stroke-linecap="round" stroke-linejoin="round">'+
               '<path d="'+g.paths+'"/></g>';
-      legend.push(chars[i]+" · "+g.folds+" banen");
+      legend.push(chars[i]+" · "+g.folds+" banen · streek "+g.sw.toFixed(1));
     }else legend.push(chars[i]+" · —");
   }
 
